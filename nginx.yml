@@ -1,0 +1,103 @@
+---
+ - name: Log playbook
+   hosts: all
+   become: true
+   vars:
+    - nginx_listen_port: 8080 #объявление переменной порта прослушивания nginx для template
+   
+   tasks:
+    - name: instal audit/logW
+      block:
+
+        - name: Update CentOS # tasks для обновления ОС
+          ansible.builtin.yum:
+            update_cache: true
+
+        - name: instal epel-release # tasks для установки epel-release
+          ansible.builtin.yum:
+            pkg: epel-release
+            state: present
+
+        - name: instal nginx # tasks для установки nginx
+          ansible.builtin.yum:
+            pkg: nginx
+            state: present
+          notify: start nginx # вызов handlers для старта nginx
+
+        - name: template nginx.conf # tasks для формирования нужного файла config для nginx
+          ansible.builtin.template:
+            src: nginx.conf.j2
+            dest: /etc/nginx/nginx.conf
+          notify: reloload nginx # вызов handlers для reloload nginx
+
+        - name: template audit.rules # tasks для формирования нужного файла config для audit
+          ansible.builtin.template:
+            src: audit.rules
+            dest: /etc/audit/rules.d/audit.rules
+    
+        - name: instal audispd-plugins #tasks для установки audispd-plugins
+          ansible.builtin.yum:
+            pkg: audispd-plugins
+            state: present
+
+        - name: template auditdw.conf # tasks для формирования нужного файла auditd.conf на logW
+          ansible.builtin.copy:
+            src: auditdw.conf
+            dest: /etc/audit/auditd.conf
+        
+        - name: template au-remote.conf  # tasks для формирования нужного файла au-remote.conf
+          ansible.builtin.copy:
+            src: au-remote.conf
+            dest: /etc/audisp/plugins.d/au-remote.conf
+
+        - name: template audisp-remote.conf  # tasks для формирования нужного файла audisp-remote.conf
+          ansible.builtin.copy:
+            src: audisp-remote.conf
+            dest: /etc/audisp/audisp-remote.conf
+          notify: restarted auditd # вызов handlers для старта auditd
+
+      when:  ansible_facts['hostname'] == 'logW' # блок для сервера Web
+
+    - name: instal server Log
+      block:
+        - name: template rsyslog.conf # tasks для формирования нужного файла config для rsyslog
+          ansible.builtin.copy:
+            src: rsyslog.conf
+            dest: /etc/rsyslog.conf
+    
+        - name: restarted rsyslog # tasks на перезапуск rsyslog
+          ansible.builtin.service:
+            name: rsyslog
+            state: restarted
+
+        - name: template auditds.conf # tasks для формирования нужного файла auditd.conf на logS
+          ansible.builtin.copy:
+            src: auditds.conf
+            dest: /etc/audit/auditd.conf
+          notify: restarted auditd # вызов handlers для старта auditd
+        
+      when:  ansible_facts['hostname'] == 'logS'  # блок для сервера лога
+
+
+   handlers:
+    - name: start nginx # handler на запуск
+      become: true
+      ansible.builtin.systemd:
+        service: nginx.service
+        state: started
+        enabled: true
+   
+    - name: reloload nginx # handler на перезапуск при изменении настроек
+      become: true
+      ansible.builtin.systemd:
+        service: nginx.service
+        state: reloaded
+        enabled: true
+
+    - name: restarted auditd # handler на перезапуск auditd
+      become: true
+      ansible.builtin.service:
+          name: auditd
+          state: restarted
+          use: service
+          enabled: true
